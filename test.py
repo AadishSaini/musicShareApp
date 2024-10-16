@@ -1,7 +1,7 @@
 # import socket
 
 # # Path to the MP3 file (on the client side)
-# file_path = "./music.mp3"
+# file_path = "./congratulation_pewds.mp3"
 
 # # Set up the socket connection
 # server_address = ('192.168.1.13', 12345)
