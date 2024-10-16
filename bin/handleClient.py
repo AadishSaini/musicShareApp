@@ -33,9 +33,26 @@ class handleClient:
                 inp = input("\nEnter Message: ")
                 if inp == 'exit':
                     self.running = False
+                elif 'music play' in inp:
+                    self.musicMode = True
+                    self.runMusicMode()
                 elif not inp:
                     pass
                 else:
                     self.s.sendall(inp.encode())
             except ConnectionResetError:
                 break
+
+    def runMusicMode(self):
+        print('music called')
+        buf = ''
+        receiving = True
+        while receiving:
+            received_data = self.s.recv(1)
+            if received_data:
+                receiving = True
+                buf += received_data
+                print(received_data)
+            else:
+                receiving = False
+        print(buf)
