@@ -3,16 +3,19 @@ import java.net.*;
 
 public class ClientHandler implements Runnable {
     private Socket socket;
+    private int servicePort;
     private ObjectOutputStream out;
     private ObjectInputStream in;
     private String username;
     private String currentRoomId;
 
-    public ClientHandler(Socket socket) {
+    public ClientHandler(Socket socket, int servicePort) {
         this.socket = socket;
+        this.servicePort = servicePort;
     }
 
     public String getUsername() { return this.username; }
+    public int getServicePort() { return this.servicePort; }
 
     @Override
     public void run() {
@@ -29,17 +32,22 @@ public class ClientHandler implements Runnable {
                         handleAuthentication(event);
                         break;
                     case "JOIN_ROOM":
-                        handleRoomJoin(event);
+                        this.username = event.sender;
+                        this.currentRoomId = event.roomId;
+                        MusicShareServer.joinRoom(event.roomId, this);
                         break;
                     case "CHAT":
                     case "STREAM_CHUNK":
                     case "MEDIA_TRANSFER":
-                        handleRoomBroadcast(event);
+                    case "SYNC_PLAYBACK":
+                        if (currentRoomId != null) {
+                            MusicShareServer.broadcastToRoom(currentRoomId, event, this, this.servicePort);
+                        }
                         break;
                 }
             }
         } catch (Exception e) {
-            System.out.println("[DISCONNECT] Connection lost with user: " + username);
+            // Drop client state cleanly on disconnection
         } finally {
             cleanup();
         }
@@ -49,23 +57,8 @@ public class ClientHandler implements Runnable {
         if (MusicShareServer.registerUser(event.sender)) {
             this.username = event.sender;
             sendEvent(new NetworkEvent("AUTH_SUCCESS", "SERVER", null, "Welcome!"));
-            System.out.println("[AUTH] Authenticated user: " + username);
         } else {
             sendEvent(new NetworkEvent("AUTH_FAIL", "SERVER", null, "Username taken."));
-        }
-    }
-
-    private void handleRoomJoin(NetworkEvent event) {
-        if (this.username == null) return;
-        MusicShareServer.leaveRooms(this);
-        this.currentRoomId = event.roomId;
-        MusicShareServer.joinRoom(event.roomId, this);
-        MusicShareServer.broadcastToRoom(currentRoomId, new NetworkEvent("SYSTEM", "SERVER", currentRoomId, username + " joined the room."), this);
-    }
-
-    private void handleRoomBroadcast(NetworkEvent event) {
-        if (currentRoomId != null) {
-            MusicShareServer.broadcastToRoom(currentRoomId, event, this);
         }
     }
 
@@ -73,16 +66,12 @@ public class ClientHandler implements Runnable {
         try {
             out.writeObject(event);
             out.flush();
-        } catch (IOException e) {
-            System.err.println("Error dispatching packet to " + username);
-        }
+        } catch (IOException ignored) {}
     }
 
     private void cleanup() {
         MusicShareServer.unregisterUser(username);
         MusicShareServer.leaveRooms(this);
-        try {
-            socket.close();
-        } catch (IOException ignored) {}
+        try { socket.close(); } catch (IOException ignored) {}
     }
 }
