@@ -1,15 +1,18 @@
 import java.io.Serializable;
+import java.util.List;
 
 public class NetworkEvent implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    public String type;        // AUTH, JOIN_ROOM, CHAT, STREAM_CHUNK, MEDIA_TRANSFER, SYNC_PLAYBACK
-    public String sender;      // Username
-    public String roomId;      // Target Room
-    public String payload;     // Message text, song title, or filename
-    public byte[] binaryData;  // For audio raw data or image transfer bytes
+    // Core Event Headers: AUTH, JOIN_ROOM, CHAT, STREAM_CHUNK, GET_PLAYLIST, PLAYLIST_DATA, SYNC_PLAYBACK
+    public String type;
+    public String sender;
+    public String roomId;
+    public String payload;     // Used for general messages or selected track titles
+    public byte[] binaryData;
 
-    // Resume Sync Engine Properties
+    // Playlist & Media Sync Telemetry
+    public List<String> playlistTracks;
     public long trackProgressMs;
     public boolean isPlaying;
 

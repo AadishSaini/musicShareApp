@@ -8,14 +8,16 @@ public class MusicShareClient {
     private static String username;
     private static String currentRoom = "Main-Lounge";
 
+    // Core Client Control Variables
+    private static volatile boolean isMicMuted = true; // Muted by default until allowed by client
+
     public static void main(String[] args) {
         username = "User_" + (int)(Math.random() * 1000);
         Scanner scanner = new Scanner(System.in);
 
         try {
-            System.out.println("[CLIENT] Initializing Tri-Service Sockets...");
+            System.out.println("[CLIENT] Connecting Tri-Service Streams...");
 
-            // Connect distinct streams to the 3 unique ports
             Socket chatSocket = new Socket("localhost", MusicShareServer.CHAT_PORT);
             ObjectOutputStream chatOut = new ObjectOutputStream(chatSocket.getOutputStream());
             ObjectInputStream chatIn = new ObjectInputStream(chatSocket.getInputStream());
@@ -28,39 +30,51 @@ public class MusicShareClient {
             ObjectOutputStream fileOut = new ObjectOutputStream(fileSocket.getOutputStream());
             ObjectInputStream fileIn = new ObjectInputStream(fileSocket.getInputStream());
 
-            // Run Authentication
             chatOut.writeObject(new NetworkEvent("AUTH", username, null, ""));
             chatOut.flush();
 
-            // Link all service channels to the active channel space
             chatOut.writeObject(new NetworkEvent("JOIN_ROOM", username, currentRoom, ""));
             streamOut.writeObject(new NetworkEvent("JOIN_ROOM", username, currentRoom, ""));
             fileOut.writeObject(new NetworkEvent("JOIN_ROOM", username, currentRoom, ""));
             chatOut.flush(); streamOut.flush(); fileOut.flush();
 
-            // Fire up async consumer pipes for all network inputs
             new Thread(() -> startControlPipeReader(chatIn)).start();
             new Thread(() -> startAudioPipeReader(streamIn)).start();
             new Thread(() -> startFilePipeReader(fileIn)).start();
 
-            // Begin continuous live audio sampling thread down Port 8081
-            streamMicrophoneAudio(streamOut, currentRoom, username);i_Beats.mp3
+            // Run the audio collection hardware thread (will evaluate the mic toggle flag dynamically)
+            streamMicrophoneAudio(streamOut, currentRoom, username);
 
-            System.out.println("\n==============================================");
-            System.out.println("  CLIENT WORKSTATION CONTROL DASHBOARD ONLINE");
-            System.out.println("  Commands: /chat <msg>  |  /sync <track>");
-            System.out.println("==============================================\n");
+            System.out.println("\n=============================================");
+            System.out.println("     MUSICSHARE CENTRAL DASHBOARD CONSOLE     ");
+            System.out.println("=============================================");
+            System.out.println("  /playlist        - Fetch central shared tracks catalog");
+            System.out.println("  /sync <track_no> - Select and sync-play track out of repository");
+            System.out.println("  /mic on          - Enable your microphone voice streaming channel");
+            System.out.println("  /mic off         - Mute/Stop microphone capture transmission");
+            System.out.println("  /chat <msg>      - Send room text chat packet");
+            System.out.println("=============================================\n");
 
             while (true) {
                 String input = scanner.nextLine();
-                if (input.startsWith("/chat ")) {
-                    chatOut.writeObject(new NetworkEvent("CHAT", username, currentRoom, input.substring(6)));
+                if (input.equalsIgnoreCase("/playlist")) {
+                    System.out.println("[REQUEST] Fetching central track list data from server indices...");
+                    chatOut.writeObject(new NetworkEvent("GET_PLAYLIST", username, currentRoom, ""));
                     chatOut.flush();
                 } else if (input.startsWith("/sync ")) {
-                    NetworkEvent syncEv = new NetworkEvent("SYNC_PLAYBACK", username, currentRoom, "PLAY:" + input.substring(6));
-                    syncEv.trackProgressMs = 14200L; // Mock progress offset tracking value
+                    String trackChoice = input.substring(6);
+                    NetworkEvent syncEv = new NetworkEvent("SYNC_PLAYBACK", username, currentRoom, "PLAY_TRACK_INDEX:" + trackChoice);
+                    syncEv.trackProgressMs = 0L;
                     syncEv.isPlaying = true;
                     chatOut.writeObject(syncEv);
+                    chatOut.flush();
+                    System.out.println("[MEDIA SYSTEM] Playback invocation update broadcasted out to room clients.");
+                } else if (input.equalsIgnoreCase("/mic on")) {
+                    isMutedMicToggle(false);
+                } else if (input.equalsIgnoreCase("/mic off")) {
+                    isMutedMicToggle(true);
+                } else if (input.startsWith("/chat ")) {
+                    chatOut.writeObject(new NetworkEvent("CHAT", username, currentRoom, input.substring(6)));
                     chatOut.flush();
                 }
             }
@@ -70,13 +84,27 @@ public class MusicShareClient {
         }
     }
 
+    private static void isMutedMicToggle(boolean setMuted) {
+        isMicMuted = setMuted;
+        if (isMicMuted) {
+            System.out.println("[MIC CONFIG] Microphone input transmission is currently STOPPED/MUTED.");
+        } else {
+            System.out.println("[MIC CONFIG] Microphone is LIVE. Transmitting voice tracking frames...");
+        }
+    }
+
     private static void startControlPipeReader(ObjectInputStream in) {
         try {
             while (true) {
                 NetworkEvent event = (NetworkEvent) in.readObject();
-                if ("SYNC_PLAYBACK".equals(event.type)) {
-                    System.out.printf("\n[SYNC COMMAND] Global room sync requested by %s -> %s (Timestamp: %d ms)\n> ",
-                            event.sender, event.payload, event.trackProgressMs);
+                if ("PLAYLIST_DATA".equals(event.type) && event.playlistTracks != null) {
+                    System.out.println("\n--- CENTRAL SYSTEM REPOSITORY PLAYLIST ---");
+                    for (String track : event.playlistTracks) {
+                        System.out.println("  " + track);
+                    }
+                    System.out.println("------------------------------------------\n> ");
+                } else if ("SYNC_PLAYBACK".equals(event.type)) {
+                    System.out.printf("\n[SYNC SIGNAL] Synchronization carousel event: %s playing for all clients.\n> ", event.payload);
                 } else {
                     System.out.printf("\n[CHAT] %s: %s\n> ", event.sender, event.payload);
                 }
@@ -100,7 +128,7 @@ public class MusicShareClient {
             while (true) {
                 NetworkEvent event = (NetworkEvent) in.readObject();
                 if ("MEDIA_TRANSFER".equals(event.type)) {
-                    System.out.printf("\n[MEDIA ASS OUT] Direct download asset block complete: %s\n> ", event.payload);
+                    System.out.printf("\n[DOWNLOAD] Download verification block completed: %s\n> ", event.payload);
                 }
             }
         } catch (Exception ignored) {}
@@ -118,12 +146,13 @@ public class MusicShareClient {
                 byte[] buffer = new byte[1024];
                 while (true) {
                     int bytesRead = line.read(buffer, 0, buffer.length);
-                    if (bytesRead > 0) {
+                    // Check if mic toggle variable allows data processing output
+                    if (bytesRead > 0 && !isMicMuted) {
                         byte[] chunk = new byte[bytesRead];
                         System.arraycopy(buffer, 0, chunk, 0, bytesRead);
                         out.writeObject(new NetworkEvent("STREAM_CHUNK", username, roomId, chunk));
                         out.flush();
-                        out.reset(); // Clear caching references to optimize memory footprint
+                        out.reset();
                     }
                 }
             } catch (Exception ignored) {}

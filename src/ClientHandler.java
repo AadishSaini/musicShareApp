@@ -36,6 +36,12 @@ public class ClientHandler implements Runnable {
                         this.currentRoomId = event.roomId;
                         MusicShareServer.joinRoom(event.roomId, this);
                         break;
+                    case "GET_PLAYLIST":
+                        // Pull the global playlist catalog and return it exclusively to this client
+                        NetworkEvent playlistResponse = new NetworkEvent("PLAYLIST_DATA", "SERVER", currentRoomId, "GLOBAL_CATALOG");
+                        playlistResponse.playlistTracks = MusicShareServer.getCentralPlaylist();
+                        sendEvent(playlistResponse);
+                        break;
                     case "CHAT":
                     case "STREAM_CHUNK":
                     case "MEDIA_TRANSFER":
@@ -47,7 +53,7 @@ public class ClientHandler implements Runnable {
                 }
             }
         } catch (Exception e) {
-            // Drop client state cleanly on disconnection
+            // Clean up disconnected states quietly
         } finally {
             cleanup();
         }
@@ -56,7 +62,7 @@ public class ClientHandler implements Runnable {
     private void handleAuthentication(NetworkEvent event) throws IOException {
         if (MusicShareServer.registerUser(event.sender)) {
             this.username = event.sender;
-            sendEvent(new NetworkEvent("AUTH_SUCCESS", "SERVER", null, "Welcome!"));
+            sendEvent(new NetworkEvent("AUTH_SUCCESS", "SERVER", null, "Authenticated."));
         } else {
             sendEvent(new NetworkEvent("AUTH_FAIL", "SERVER", null, "Username taken."));
         }

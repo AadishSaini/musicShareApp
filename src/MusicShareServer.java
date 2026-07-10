@@ -12,10 +12,16 @@ public class MusicShareServer {
     private static final Set<String> authenticatedUsers = ConcurrentHashMap.newKeySet();
     private static final ExecutorService threadPool = Executors.newCachedThreadPool();
 
-    public static void main(String[] args) {
-        System.out.println("[SERVER CORE] Launching 3 Dedicated TCP Services...");
+    // Central Playlist Asset Catalog
+    private static final List<String> centralPlaylist = Collections.unmodifiableList(Arrays.asList(
+            "audio1",
+            "audio2",
+            "audio3",
+            "audio4"
+    ));
 
-        // Spin up 3 independent service pipe listeners
+    public static void main(String[] args) {
+        System.out.println("[SERVER CORE] Launching Tri-Service Music Platform...");
         threadPool.execute(() -> startService(CHAT_PORT, "CHAT/AUTH SERVICE"));
         threadPool.execute(() -> startService(STREAM_PORT, "AUDIO STREAM SERVICE"));
         threadPool.execute(() -> startService(FILE_PORT, "IMAGE TRANSFER SERVICE"));
@@ -33,9 +39,12 @@ public class MusicShareServer {
         }
     }
 
+    public static List<String> getCentralPlaylist() {
+        return centralPlaylist;
+    }
+
     public static void joinRoom(String roomId, ClientHandler client) {
         rooms.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet()).add(client);
-        System.out.println("[ROOM] " + client.getUsername() + " linked on service port: " + client.getServicePort());
     }
 
     public static void leaveRooms(ClientHandler client) {
@@ -46,7 +55,6 @@ public class MusicShareServer {
         Set<ClientHandler> clients = rooms.get(roomId);
         if (clients != null) {
             for (ClientHandler client : clients) {
-                // Isolate routing lanes by the exact incoming service port framework
                 if (client != excludeClient && client.getServicePort() == servicePort) {
                     client.sendEvent(event);
                 }
