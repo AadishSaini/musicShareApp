@@ -4,7 +4,7 @@ import java.util.List;
 public class NetworkEvent implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    public String type;        // AUTH, JOIN_ROOM, CHAT, STREAM_CHUNK, GET_PLAYLIST, PLAYLIST_DATA
+    public String type;        // AUTH, JOIN_ROOM, CHAT, STREAM_CHUNK, GET_PLAYLIST, PLAYLIST_DATA, AUTH_SUCCESS, AUTH_FAIL
     public String sender;
     public String roomId;
     public String payload;

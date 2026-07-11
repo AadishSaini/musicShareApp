@@ -6,14 +6,13 @@ import javax.sound.sampled.*;
 public class MusicShareClient {
     private static SourceDataLine speakers = null;
     private static String username;
-    private static String currentRoom; // Made dynamic
+    private static String currentRoom;
     private static volatile boolean isMicMuted = true;
 
     public static void main(String[] args) {
         username = "User_" + (int)(Math.random() * 1000);
         Scanner scanner = new Scanner(System.in);
 
-        // --- DYNAMIC ROOM SELECTION ON STARTUP ---
         System.out.println("=============================================");
         System.out.println("      WELCOME TO THE MUSICSHARE NETWORK      ");
         System.out.println("=============================================");
@@ -29,25 +28,40 @@ public class MusicShareClient {
             currentRoom = "Default-Lounge";
         }
         System.out.println("\n[SYSTEM] Provisioning streams for Room: [" + currentRoom + "]...");
-        // ------------------------------------------
 
+        Socket chatSocket = null, streamSocket = null, fileSocket = null;
         try {
             System.out.println("[CLIENT] Connecting Tri-Service Streams...");
 
-            Socket chatSocket = new Socket("localhost", MusicShareServer.CHAT_PORT);
+            chatSocket = new Socket("localhost", MusicShareServer.CHAT_PORT);
             ObjectOutputStream chatOut = new ObjectOutputStream(chatSocket.getOutputStream());
             ObjectInputStream chatIn = new ObjectInputStream(chatSocket.getInputStream());
 
-            Socket streamSocket = new Socket("localhost", MusicShareServer.STREAM_PORT);
+            streamSocket = new Socket("localhost", MusicShareServer.STREAM_PORT);
             ObjectOutputStream streamOut = new ObjectOutputStream(streamSocket.getOutputStream());
             ObjectInputStream streamIn = new ObjectInputStream(streamSocket.getInputStream());
 
-            Socket fileSocket = new Socket("localhost", MusicShareServer.FILE_PORT);
+            fileSocket = new Socket("localhost", MusicShareServer.FILE_PORT);
             ObjectOutputStream fileOut = new ObjectOutputStream(fileSocket.getOutputStream());
             ObjectInputStream fileIn = new ObjectInputStream(fileSocket.getInputStream());
 
+            // --- AUTH HANDSHAKE ---
+            // Wait synchronously for the server's AUTH_SUCCESS/AUTH_FAIL before doing anything
+            // else, so a duplicate username actually stops the client instead of silently
+            // continuing to join a room it was never authenticated for.
             chatOut.writeObject(new NetworkEvent("AUTH", username, null, ""));
             chatOut.flush();
+
+            NetworkEvent authResponse = (NetworkEvent) chatIn.readObject();
+            if ("AUTH_FAIL".equals(authResponse.type)) {
+                System.out.println("[SYSTEM] " + authResponse.payload);
+                System.out.println("[SYSTEM] That username is already in use in this session. Please restart and pick another.");
+                chatSocket.close();
+                streamSocket.close();
+                fileSocket.close();
+                return;
+            }
+            System.out.println("[SYSTEM] " + authResponse.payload);
 
             chatOut.writeObject(new NetworkEvent("JOIN_ROOM", username, currentRoom, ""));
             streamOut.writeObject(new NetworkEvent("JOIN_ROOM", username, currentRoom, ""));
@@ -77,7 +91,7 @@ public class MusicShareClient {
                     chatOut.writeObject(new NetworkEvent("GET_PLAYLIST", username, currentRoom, ""));
                     chatOut.flush();
                 } else if (input.startsWith("/play ")) {
-                    String indexChoice = input.substring(6);
+                    String indexChoice = input.substring(6).trim();
                     chatOut.writeObject(new NetworkEvent("SYNC_PLAYBACK", username, currentRoom, "PLAY_TRACK_INDEX:" + indexChoice));
                     chatOut.flush();
                 } else if (input.equalsIgnoreCase("/mic on")) {
@@ -97,42 +111,6 @@ public class MusicShareClient {
         }
     }
 
-    private static void broadcastAudioFile(String fileName, ObjectOutputStream out) {
-        File audioFile = new File(fileName);
-        if (!audioFile.exists()) {
-            System.out.println("[ERROR] Audio file not found locally: " + fileName);
-            return;
-        }
-
-        System.out.println("[BROADCAST] Starting live audio stream of: " + fileName);
-        try (AudioInputStream ais = AudioSystem.getAudioInputStream(audioFile)) {
-            AudioFormat baseFormat = ais.getFormat();
-            // Standardize format for streaming transmission
-            AudioFormat targetFormat = new AudioFormat(44100, 16, 1, true, true);
-
-            try (AudioInputStream decodedAis = AudioSystem.getAudioInputStream(targetFormat, ais)) {
-                byte[] buffer = new byte[4096];
-                int bytesRead;
-
-                while ((bytesRead = decodedAis.read(buffer, 0, buffer.length)) != -1) {
-                    byte[] chunk = new byte[bytesRead];
-                    System.arraycopy(buffer, 0, chunk, 0, bytesRead);
-
-                    // Transmit raw audio data directly down the streaming channel
-                    out.writeObject(new NetworkEvent("STREAM_CHUNK", username, currentRoom, chunk));
-                    out.flush();
-                    out.reset();
-
-                    // Throttle transmission to match playback speed (approx 23ms per 4KB chunk at 44.1kHz 16-bit mono)
-                    Thread.sleep(23);
-                }
-                System.out.println("[BROADCAST] Finished streaming audio file.");
-            }
-        } catch (Exception e) {
-            System.err.println("[BROADCAST ERROR] Streaming interrupted: " + e.getMessage());
-        }
-    }
-
     private static void startControlPipeReader(ObjectInputStream in) {
         try {
             while (true) {
@@ -147,7 +125,9 @@ public class MusicShareClient {
                     System.out.printf("\n[CHAT] %s: %s\n> ", event.sender, event.payload);
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+            System.out.println("\n[SYSTEM] Disconnected from server chat channel.");
+        }
     }
 
     private static void startAudioPipeReader(ObjectInputStream in) {
@@ -160,8 +140,6 @@ public class MusicShareClient {
             }
         } catch (Exception ignored) {}
     }
-
-    private static void startFilePipeReader(ObjectInputStream in) {}
 
     private static void streamMicrophoneAudio(ObjectOutputStream out, String roomId, String username) {
         new Thread(() -> {
