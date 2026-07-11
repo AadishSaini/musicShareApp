@@ -4,17 +4,12 @@ import java.util.List;
 public class NetworkEvent implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    // Core Event Headers: AUTH, JOIN_ROOM, CHAT, STREAM_CHUNK, GET_PLAYLIST, PLAYLIST_DATA, SYNC_PLAYBACK
-    public String type;
+    public String type;        // AUTH, JOIN_ROOM, CHAT, STREAM_CHUNK, GET_PLAYLIST, PLAYLIST_DATA
     public String sender;
     public String roomId;
-    public String payload;     // Used for general messages or selected track titles
-    public byte[] binaryData;
-
-    // Playlist & Media Sync Telemetry
+    public String payload;
+    public byte[] binaryData;  // Holds raw microphone OR raw song audio bytes
     public List<String> playlistTracks;
-    public long trackProgressMs;
-    public boolean isPlaying;
 
     public NetworkEvent(String type, String sender, String roomId, String payload) {
         this.type = type;

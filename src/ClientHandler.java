@@ -37,19 +37,29 @@ public class ClientHandler implements Runnable {
                         MusicShareServer.joinRoom(event.roomId, this);
                         break;
                     case "GET_PLAYLIST":
-                        // Pull the global playlist catalog and return it exclusively to this client
                         NetworkEvent playlistResponse = new NetworkEvent("PLAYLIST_DATA", "SERVER", currentRoomId, "GLOBAL_CATALOG");
                         playlistResponse.playlistTracks = MusicShareServer.getCentralPlaylist();
                         sendEvent(playlistResponse);
                         break;
+                    case "SYNC_PLAYBACK":
+                        // Intercept the play command and tell the server engine to start streaming
+                        if (event.payload.startsWith("PLAY_TRACK_INDEX:") && currentRoomId != null) {
+                            try {
+                                int trackIndex = Integer.parseInt(event.payload.split(":")[1]) - 1;
+                                MusicShareServer.playTrackInRoom(currentRoomId, trackIndex);
+                            } catch (Exception e) {
+                                System.err.println("[SERVER ROUTER] Invalid play index format received.");
+                            }
+                        }
+                        break;
                     case "CHAT":
                     case "STREAM_CHUNK":
                     case "MEDIA_TRANSFER":
-                    case "SYNC_PLAYBACK":
                         if (currentRoomId != null) {
                             MusicShareServer.broadcastToRoom(currentRoomId, event, this, this.servicePort);
                         }
                         break;
+
                 }
             }
         } catch (Exception e) {

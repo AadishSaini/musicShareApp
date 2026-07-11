@@ -6,14 +6,30 @@ import javax.sound.sampled.*;
 public class MusicShareClient {
     private static SourceDataLine speakers = null;
     private static String username;
-    private static String currentRoom = "Main-Lounge";
-
-    // Core Client Control Variables
-    private static volatile boolean isMicMuted = true; // Muted by default until allowed by client
+    private static String currentRoom; // Made dynamic
+    private static volatile boolean isMicMuted = true;
 
     public static void main(String[] args) {
         username = "User_" + (int)(Math.random() * 1000);
         Scanner scanner = new Scanner(System.in);
+
+        // --- DYNAMIC ROOM SELECTION ON STARTUP ---
+        System.out.println("=============================================");
+        System.out.println("      WELCOME TO THE MUSICSHARE NETWORK      ");
+        System.out.println("=============================================");
+        System.out.print("Enter your username (Leave blank for random): ");
+        String customName = scanner.nextLine().trim();
+        if (!customName.isEmpty()) {
+            username = customName;
+        }
+
+        System.out.print("Enter the Room Name you want to join (e.g., Lofi, Rock): ");
+        currentRoom = scanner.nextLine().trim();
+        if (currentRoom.isEmpty()) {
+            currentRoom = "Default-Lounge";
+        }
+        System.out.println("\n[SYSTEM] Provisioning streams for Room: [" + currentRoom + "]...");
+        // ------------------------------------------
 
         try {
             System.out.println("[CLIENT] Connecting Tri-Service Streams...");
@@ -40,39 +56,36 @@ public class MusicShareClient {
 
             new Thread(() -> startControlPipeReader(chatIn)).start();
             new Thread(() -> startAudioPipeReader(streamIn)).start();
-            new Thread(() -> startFilePipeReader(fileIn)).start();
 
-            // Run the audio collection hardware thread (will evaluate the mic toggle flag dynamically)
             streamMicrophoneAudio(streamOut, currentRoom, username);
 
             System.out.println("\n=============================================");
-            System.out.println("     MUSICSHARE CENTRAL DASHBOARD CONSOLE     ");
+            System.out.println("     MUSICSHARE LIVE BROADCAST DASHBOARD     ");
             System.out.println("=============================================");
-            System.out.println("  /playlist        - Fetch central shared tracks catalog");
-            System.out.println("  /sync <track_no> - Select and sync-play track out of repository");
-            System.out.println("  /mic on          - Enable your microphone voice streaming channel");
-            System.out.println("  /mic off         - Mute/Stop microphone capture transmission");
-            System.out.println("  /chat <msg>      - Send room text chat packet");
+            System.out.println("  Active Room     : " + currentRoom);
+            System.out.println("  Active User     : " + username);
+            System.out.println("---------------------------------------------");
+            System.out.println("  /playlist       - Fetch central tracks catalog");
+            System.out.println("  /play <index>   - Stream track from server to your room");
+            System.out.println("  /mic on | off   - Toggle microphone streaming channel");
+            System.out.println("  /chat <msg>     - Send room text chat");
             System.out.println("=============================================\n");
 
             while (true) {
                 String input = scanner.nextLine();
                 if (input.equalsIgnoreCase("/playlist")) {
-                    System.out.println("[REQUEST] Fetching central track list data from server indices...");
                     chatOut.writeObject(new NetworkEvent("GET_PLAYLIST", username, currentRoom, ""));
                     chatOut.flush();
-                } else if (input.startsWith("/sync ")) {
-                    String trackChoice = input.substring(6);
-                    NetworkEvent syncEv = new NetworkEvent("SYNC_PLAYBACK", username, currentRoom, "PLAY_TRACK_INDEX:" + trackChoice);
-                    syncEv.trackProgressMs = 0L;
-                    syncEv.isPlaying = true;
-                    chatOut.writeObject(syncEv);
+                } else if (input.startsWith("/play ")) {
+                    String indexChoice = input.substring(6);
+                    chatOut.writeObject(new NetworkEvent("SYNC_PLAYBACK", username, currentRoom, "PLAY_TRACK_INDEX:" + indexChoice));
                     chatOut.flush();
-                    System.out.println("[MEDIA SYSTEM] Playback invocation update broadcasted out to room clients.");
                 } else if (input.equalsIgnoreCase("/mic on")) {
-                    isMutedMicToggle(false);
+                    isMicMuted = false;
+                    System.out.println("[MIC] Mic is LIVE.");
                 } else if (input.equalsIgnoreCase("/mic off")) {
-                    isMutedMicToggle(true);
+                    isMicMuted = true;
+                    System.out.println("[MIC] Mic is MUTED.");
                 } else if (input.startsWith("/chat ")) {
                     chatOut.writeObject(new NetworkEvent("CHAT", username, currentRoom, input.substring(6)));
                     chatOut.flush();
@@ -84,12 +97,39 @@ public class MusicShareClient {
         }
     }
 
-    private static void isMutedMicToggle(boolean setMuted) {
-        isMicMuted = setMuted;
-        if (isMicMuted) {
-            System.out.println("[MIC CONFIG] Microphone input transmission is currently STOPPED/MUTED.");
-        } else {
-            System.out.println("[MIC CONFIG] Microphone is LIVE. Transmitting voice tracking frames...");
+    private static void broadcastAudioFile(String fileName, ObjectOutputStream out) {
+        File audioFile = new File(fileName);
+        if (!audioFile.exists()) {
+            System.out.println("[ERROR] Audio file not found locally: " + fileName);
+            return;
+        }
+
+        System.out.println("[BROADCAST] Starting live audio stream of: " + fileName);
+        try (AudioInputStream ais = AudioSystem.getAudioInputStream(audioFile)) {
+            AudioFormat baseFormat = ais.getFormat();
+            // Standardize format for streaming transmission
+            AudioFormat targetFormat = new AudioFormat(44100, 16, 1, true, true);
+
+            try (AudioInputStream decodedAis = AudioSystem.getAudioInputStream(targetFormat, ais)) {
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+
+                while ((bytesRead = decodedAis.read(buffer, 0, buffer.length)) != -1) {
+                    byte[] chunk = new byte[bytesRead];
+                    System.arraycopy(buffer, 0, chunk, 0, bytesRead);
+
+                    // Transmit raw audio data directly down the streaming channel
+                    out.writeObject(new NetworkEvent("STREAM_CHUNK", username, currentRoom, chunk));
+                    out.flush();
+                    out.reset();
+
+                    // Throttle transmission to match playback speed (approx 23ms per 4KB chunk at 44.1kHz 16-bit mono)
+                    Thread.sleep(23);
+                }
+                System.out.println("[BROADCAST] Finished streaming audio file.");
+            }
+        } catch (Exception e) {
+            System.err.println("[BROADCAST ERROR] Streaming interrupted: " + e.getMessage());
         }
     }
 
@@ -98,13 +138,11 @@ public class MusicShareClient {
             while (true) {
                 NetworkEvent event = (NetworkEvent) in.readObject();
                 if ("PLAYLIST_DATA".equals(event.type) && event.playlistTracks != null) {
-                    System.out.println("\n--- CENTRAL SYSTEM REPOSITORY PLAYLIST ---");
+                    System.out.println("\n--- AVAILABLE CATALOG STREAMS ---");
                     for (String track : event.playlistTracks) {
                         System.out.println("  " + track);
                     }
-                    System.out.println("------------------------------------------\n> ");
-                } else if ("SYNC_PLAYBACK".equals(event.type)) {
-                    System.out.printf("\n[SYNC SIGNAL] Synchronization carousel event: %s playing for all clients.\n> ", event.payload);
+                    System.out.println("---------------------------------\n> ");
                 } else {
                     System.out.printf("\n[CHAT] %s: %s\n> ", event.sender, event.payload);
                 }
@@ -116,23 +154,14 @@ public class MusicShareClient {
         try {
             while (true) {
                 NetworkEvent event = (NetworkEvent) in.readObject();
-                if ("STREAM_CHUNK".equals(event.type)) {
+                if ("STREAM_CHUNK".equals(event.type) && event.binaryData != null) {
                     playAudioChunk(event.binaryData);
                 }
             }
         } catch (Exception ignored) {}
     }
 
-    private static void startFilePipeReader(ObjectInputStream in) {
-        try {
-            while (true) {
-                NetworkEvent event = (NetworkEvent) in.readObject();
-                if ("MEDIA_TRANSFER".equals(event.type)) {
-                    System.out.printf("\n[DOWNLOAD] Download verification block completed: %s\n> ", event.payload);
-                }
-            }
-        } catch (Exception ignored) {}
-    }
+    private static void startFilePipeReader(ObjectInputStream in) {}
 
     private static void streamMicrophoneAudio(ObjectOutputStream out, String roomId, String username) {
         new Thread(() -> {
@@ -146,7 +175,6 @@ public class MusicShareClient {
                 byte[] buffer = new byte[1024];
                 while (true) {
                     int bytesRead = line.read(buffer, 0, buffer.length);
-                    // Check if mic toggle variable allows data processing output
                     if (bytesRead > 0 && !isMicMuted) {
                         byte[] chunk = new byte[bytesRead];
                         System.arraycopy(buffer, 0, chunk, 0, bytesRead);
